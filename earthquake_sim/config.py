@@ -48,3 +48,18 @@ MAP_BOUNDS = {
     'min_lat': 24.0,
     'max_lat': 46.0,
 }
+
+# 多震源模式常量
+MODE_SINGLE = 0
+MODE_MULTI = 1
+
+# 多震源子状态
+MULTI_DRAW_FAULT = 0
+MULTI_SELECT_SOURCES = 1
+MULTI_SELECT_START = 2
+MULTI_SELECT_DIR = 3
+MULTI_SET_PARAMS = 4
+MULTI_RUNNING = 5
+
+# 默认破裂速度
+DEFAULT_RUPTURE_VELOCITY = 2.5  # km/s
