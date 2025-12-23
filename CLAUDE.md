@@ -58,12 +58,11 @@ Key data flow:
 
 **IMPORTANT: All AI models must follow these rules when installing packages**
 
-- **ENFORCEMENT**: This repository uses Git hooks and environment variables to **block** non-virtual environment `pip install` commands.
-- **NEVER** use plain `pip install` or `python -m pip install` (will fail with error).
-- **MUST** use the virtual environment's Python interpreter:
-  - **Windows**: `.venv\Scripts\python -m pip install package_name`
-  - **macOS/Linux**: `.venv/bin/python -m pip install package_name`
-- The `.env` file contains `PIP_REQUIRE_VIRTUALENV=true` to enforce this rule (must be loaded manually or via `python-dotenv`).
+- **NEVER** use plain `pip install` or `python -m pip install`
+- **MUST** use the virtual environment's Python interpreter
+- **Windows**: Use `.venv\Scripts\python -m pip install package_name`
+- **macOS/Linux**: Use `.venv/bin/python -m pip install package_name`
+- If virtual environment is not activated, the command will be rejected
 
 **Why:** This prevents accidentally installing packages to the system Python environment instead of the project's isolated virtual environment.
 
@@ -72,27 +71,7 @@ Key data flow:
 # CORRECT ✓
 .venv\Scripts\python -m pip install pygame
 
-# INCORRECT ✗ (will fail with error)
+# INCORRECT ✗
 pip install pygame
 python -m pip install pygame
 ```
-
-### Hooks and Enforcement
-
-**Git Hooks (Primary):**
-- Configured via `git config core.hooksPath = .githooks`
-- `.githooks/pre-commit` blocks dependency changes outside virtual environment
-- `.githooks/pre-push` blocks pushing dependency changes outside virtual environment
-- Attempting to commit/push changes to `requirements.txt` outside `.venv` will fail with an error
-
-**Claude Code Hooks (Secondary):**
-- `.claude/hooks/pre-bash` monitors bash commands for unguarded `pip install` usage
-- Acts as an additional safety layer for interactive Claude Code sessions
-
-**Environment Variable Enforcement:**
-- The `.env` file contains `PIP_REQUIRE_VIRTUALENV=true` for shell-level enforcement
-- Load with: `source .env` (Unix) or running `setup.bat` (Windows)
-
-**Windows Setup:**
-- Run `setup.bat` to automatically create virtual environment and load `.env`
-- This activates venv and sets `PIP_REQUIRE_VIRTUALENV=true` in the current session
