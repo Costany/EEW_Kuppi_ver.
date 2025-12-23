@@ -972,12 +972,28 @@ class EarthquakeSimulator:
                         # 多震源设置阶段
                         if event.key == pygame.K_UP:
                             self.temp_depth = min(700, self.temp_depth + 5)
+                            # 同步更新所有已放置震源点的深度
+                            for src in self.multi_sources:
+                                src.depth = self.temp_depth
+                                src.eq.depth = self.temp_depth
                         elif event.key == pygame.K_DOWN:
                             self.temp_depth = max(0, self.temp_depth - 5)
+                            # 同步更新所有已放置震源点的深度
+                            for src in self.multi_sources:
+                                src.depth = self.temp_depth
+                                src.eq.depth = self.temp_depth
                         elif event.key == pygame.K_RIGHT:
                             self.temp_mag = min(9.5, self.temp_mag + 0.1)
+                            # 同步更新所有已放置震源点的震级
+                            for src in self.multi_sources:
+                                src.magnitude = self.temp_mag
+                                src.eq.magnitude = self.temp_mag
                         elif event.key == pygame.K_LEFT:
                             self.temp_mag = max(1.0, self.temp_mag - 0.1)
+                            # 同步更新所有已放置震源点的震级
+                            for src in self.multi_sources:
+                                src.magnitude = self.temp_mag
+                                src.eq.magnitude = self.temp_mag
                         elif event.key == pygame.K_c:
                             self.rupture_velocity = min(10.0, self.rupture_velocity + 0.2)
                         elif event.key == pygame.K_v:
