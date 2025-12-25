@@ -119,6 +119,25 @@ def _bai_from_amp(amp: float) -> float:
     return (amp * 4.0 + amp * amp) / 5.0
 
 
+def _plateau_duration(magnitude: float) -> float:
+    """Calculate plateau duration (seconds) based on magnitude.
+
+    Plateau phase: period where intensity stays at peak before decay begins.
+    This reflects real earthquake observations where strong motion persists
+    for a duration proportional to earthquake magnitude.
+
+    Formula: plateau = 2.0 × 2^(M - 6)
+    - M6.0 → 2s
+    - M7.0 → 4s
+    - M8.0 → 8s
+    - M9.0 → 16s
+    - M9.5 → ~11.3s (2.0 × 2^3.5)
+
+    This ensures large earthquakes can reach theoretical peak intensity (震度7).
+    """
+    return 2.0 * (2.0 ** (magnitude - 6.0))
+
+
 def envelope_single(eq, lat: float, lon: float, amp: float = 1.0) -> Tuple[float, bool]:
     """Instantaneous intensity at (lat, lon) for a single Earthquake eq.
 
@@ -142,7 +161,19 @@ def envelope_single(eq, lat: float, lon: float, amp: float = 1.0) -> Tuple[float
     # Envelopes
     i_p_env = i_p_peak * _attack(dt_p, TAU_P_RISE) * _decay(dt_p, TAU_P_DECAY)
     tau_s = _tau_s_decay(eq.magnitude, epicentral_dist, amp)
-    i_s_env = i_s_peak * _attack(dt_s, TAU_S_RISE) * _decay(dt_s, tau_s)
+
+    # S波平台期机制: 强震动持续一段时间后才开始衰减
+    plateau = _plateau_duration(eq.magnitude)
+    if dt_s <= 0.0:
+        # S波未到达
+        i_s_env = 0.0
+    elif dt_s <= plateau:
+        # 平台期内: 只上升到峰值，不衰减
+        i_s_env = i_s_peak * _attack(dt_s, TAU_S_RISE)
+    else:
+        # 平台期后: 从峰值开始衰减
+        dt_after_plateau = dt_s - plateau
+        i_s_env = i_s_peak * _decay(dt_after_plateau, tau_s)
 
     # Display intensity: take stronger branch
     if i_s_env >= i_p_env:
