@@ -141,7 +141,7 @@ class EarthquakeSimulator:
 
         # 自动缩放设置（动态追踪模式）
         self.auto_zoom_enabled = True  # 是否启用自动缩放
-        self.auto_zoom_mode = "off"  # 追踪模式: "off", "waiting", "following_station", "following_p", "following_s", "return_to_epicenter"
+        self.auto_zoom_mode = "off"  # 追踪模式: "off", "waiting", "detecting", "following_station", "following_p", "following_s", "return_to_epicenter"
         self.tracked_station = None  # 当前追踪的站点 (lat, lon)
         self.max_detected_intensity = 0.0  # 已检测到的最大震度
         self.tracking_start_time = 0  # 追踪开始时间
@@ -621,54 +621,74 @@ class EarthquakeSimulator:
                     pygame.draw.rect(self.screen, (0, 0, 0), (cx-s//2, cy-s//2, s, s), 1)
 
     def _get_region_fill_color(self, intensity: float):
-        """根据震度获取区域填充颜色（RGBA）"""
-        if intensity < 1:
+        """根据震度获取区域填充颜色（与 intensity_to_scale 阈值一致）"""
+        if intensity < 0.5:
             return None
-        elif intensity < 2:
-            return (100, 150, 255, 60)   # 震度1 浅蓝
-        elif intensity < 3:
-            return (50, 100, 200, 80)    # 震度2 蓝
-        elif intensity < 4:
-            return (50, 255, 50, 100)    # 震度3 绿/黄
-        elif intensity < 5:
-            return (255, 200, 0, 120)    # 震度4 橙黄
+        elif intensity < 1.5:
+            return (0, 191, 255, 80)     # 震度1 浅蓝
+        elif intensity < 2.5:
+            return (0, 255, 191, 100)    # 震度2 青
+        elif intensity < 3.5:
+            return (0, 255, 0, 120)      # 震度3 绿
+        elif intensity < 4.5:
+            return (255, 255, 0, 140)    # 震度4 黄
+        elif intensity < 5.0:
+            return (255, 200, 0, 160)    # 震度5弱 橙黄
         elif intensity < 5.5:
-            return (255, 150, 0, 140)    # 震度5弱 橙
-        elif intensity < 6:
-            return (255, 50, 0, 160)     # 震度5强 红橙
+            return (255, 127, 0, 180)    # 震度5强 橙
+        elif intensity < 6.0:
+            return (255, 0, 0, 200)      # 震度6弱 红
         elif intensity < 6.5:
-            return (255, 0, 0, 180)      # 震度6弱 红
-        elif intensity < 7:
-            return (200, 0, 100, 200)    # 震度6强 紫红
+            return (200, 0, 100, 210)    # 震度6强 紫红
         else:
-            return (150, 0, 150, 220)    # 震度7 紫
+            return (200, 0, 200, 220)    # 震度7 紫
 
     def update_region_intensities_from_new_stations(self):
-        """从新站点系统更新区域震度（用于区域填色）"""
-        if not self.station_manager:
-            return
+        """从站点系统更新区域震度（用于区域填色）"""
+        # 首次调用时预计算新站点->旧站点的映射（只计算一次）
+        if not hasattr(self, '_new_to_old_station_map'):
+            print("[性能优化] 预计算站点映射...")
+            self._new_to_old_station_map = {}  # station.id -> old_station
 
-        # 首次调用时预计算站点-区域映射（只计算一次）
-        if not hasattr(self, '_station_region_cache'):
-            self._station_region_cache = {}
-            print("[性能优化] 预计算站点-区域映射...")
+            # 构建旧站点的坐标索引（加速查找）
+            old_stations_index = []
+            for old_station in self.stations:
+                old_lat = float(old_station['lat'])
+                old_lon = float(old_station['lon'])
+                old_stations_index.append((old_lat, old_lon, old_station))
+
             for station in self.station_manager.stations:
-                region_code = self._find_region_for_point(station.lat, station.lon)
-                self._station_region_cache[station.id] = region_code
-            print(f"[性能优化] 完成，缓存了 {len(self._station_region_cache)} 个站点")
+                best_match = None
+                best_dist = float('inf')
+
+                for old_lat, old_lon, old_station in old_stations_index:
+                    # 计算距离（简化版，不需要精确）
+                    dist = abs(old_lat - station.lat) + abs(old_lon - station.lon)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_match = old_station
+
+                # 不设阈值，每个新站点都匹配最近的旧站点
+                if best_match:
+                    self._new_to_old_station_map[station.id] = best_match
+
+            print(f"[性能优化] 完成: {len(self._new_to_old_station_map)}/{len(self.station_manager.stations)} 个站点匹配成功")
 
         # 清空并重建区域震度
         self.region_max_intensities = {}
         self.max_intensity = 0
         self.max_intensity_location = ""
 
-        # 遍历所有站点，使用缓存的区域代码
+        # 使用缓存的映射更新区域震度
         for station in self.station_manager.stations:
             if station.intensity < 0.5:
                 continue
 
-            # 使用缓存的区域代码（O(1) 查找）
-            region_code = self._station_region_cache.get(station.id, "")
+            old_station = self._new_to_old_station_map.get(station.id)
+            if not old_station:
+                continue
+
+            region_code = old_station.get('area', {}).get('code', '')
             if not region_code:
                 continue
 
@@ -679,11 +699,7 @@ class EarthquakeSimulator:
             # 更新全局最大震度
             if station.intensity > self.max_intensity:
                 self.max_intensity = station.intensity
-                # 查找区域名称（也可以缓存，但这个不频繁）
-                for region in self.regions_data:
-                    if region.get('properties', {}).get('code', '') == region_code:
-                        self.max_intensity_location = region.get('properties', {}).get('name', '')
-                        break
+                self.max_intensity_location = old_station.get('area', {}).get('name', '')
 
     def _find_region_for_point(self, lat: float, lon: float) -> str:
         """查找点所在的区域代码（使用point-in-polygon算法）"""
@@ -1114,6 +1130,8 @@ class EarthquakeSimulator:
         # 按钮文字
         if self.auto_zoom_mode == "waiting":
             text = "等待检测"
+        elif self.auto_zoom_mode == "detecting":
+            text = "检测异动"
         elif self.auto_zoom_mode == "following_station":
             text = "追踪站点"
         elif self.auto_zoom_mode == "following_p":
@@ -1223,10 +1241,11 @@ class EarthquakeSimulator:
 
         追踪模式切换：
         1. waiting: 等待站点检测到地震波
-        2. following_station: 检测到震度3+站点，快速锁定异动区域
-        3. following_p: 锁定后追踪P波扩散（间隔式平滑缩放）
-        4. following_s: 大范围高震度，追踪S波扩散（间隔式平滑缩放）
-        5. return_to_epicenter: 达到最大视野后回到震央（总结）
+        2. detecting: 检测到异动（任何震度>=0），镜头移动到站点，400km视野
+        3. following_station: 震度3+，正式开始追标，快速锁定异动区域
+        4. following_p: 锁定后追踪P波扩散（间隔式平滑缩放）
+        5. following_s: 大范围高震度，追踪S波扩散（间隔式平滑缩放）
+        6. return_to_epicenter: 达到最大视野后回到震央（总结）
         """
         if not self.auto_zoom_enabled or self.auto_zoom_mode == "off":
             return
@@ -1243,36 +1262,68 @@ class EarthquakeSimulator:
         p_radius = self.earthquake.get_p_wave_radius()
         s_radius = self.earthquake.get_s_wave_radius()
 
-        # 检查是否有震度3+的站点
-        high_intensity_stations = []
+        # 收集所有检测到波的站点（震度>=0）
+        all_detected_stations = []
         for (lat, lon), (intensity, is_s_wave) in self.station_intensities.items():
-            if intensity >= 3.0:
-                high_intensity_stations.append((lat, lon, intensity))
+            if intensity >= 0:
+                all_detected_stations.append((lat, lon, intensity, is_s_wave))
+
+        # 收集震度3+的站点（用于正式追标）
+        high_intensity_stations = [(lat, lon, i) for lat, lon, i, _ in all_detected_stations if i >= 3.0]
 
         # 模式切换逻辑
         if self.auto_zoom_mode == "waiting":
-            # 等待模式：不做任何操作，等待站点检测
-            # 检测到第一个震度3+站点 -> 立即切换到站点追踪
-            if high_intensity_stations:
+            # 等待模式：检测到任何站点有波经过 -> 切换到detecting模式
+            if all_detected_stations:
                 # 找最高震度站点
+                all_detected_stations.sort(key=lambda x: x[2], reverse=True)
+                target_lat, target_lon, target_intensity, is_s_wave = all_detected_stations[0]
+
+                self.auto_zoom_mode = "detecting"
+                self.tracked_station = (target_lat, target_lon)
+                self.max_detected_intensity = target_intensity
+                self.first_detection_time = current_time
+                self.zoom_locked = False
+
+                # 播放检测音效（chime）
+                if self.sound_manager:
+                    self.sound_manager.play_chime()
+
+                print(f"[检测] 站点检测到异动 - 震度{target_intensity:.1f} (t={current_time:.1f}s)")
+
+        elif self.auto_zoom_mode == "detecting":
+            # 检测模式：镜头移动到检测站点，400km视野
+            if all_detected_stations:
+                # 更新追踪目标（找最高震度站点）
+                all_detected_stations.sort(key=lambda x: x[2], reverse=True)
+                target_lat, target_lon, target_intensity, is_s_wave = all_detected_stations[0]
+
+                if target_intensity > self.max_detected_intensity:
+                    self.tracked_station = (target_lat, target_lon)
+                    self.max_detected_intensity = target_intensity
+
+                # 镜头移动到站点，400km视野（平滑过渡）
+                self._zoom_to_circle(self.tracked_station[0], self.tracked_station[1],
+                                    radius_km=400, smooth=True)
+
+            # 震度3+时 -> 切换到正式追标模式
+            if high_intensity_stations:
                 high_intensity_stations.sort(key=lambda x: x[2], reverse=True)
                 target_lat, target_lon, target_intensity = high_intensity_stations[0]
 
-                if target_intensity >= 3.0:
-                    self.auto_zoom_mode = "following_station"
-                    self.tracked_station = (target_lat, target_lon)
-                    self.max_detected_intensity = target_intensity
-                    self.zoom_locked = False
+                self.auto_zoom_mode = "following_station"
+                self.tracked_station = (target_lat, target_lon)
+                self.max_detected_intensity = target_intensity
+                self.zoom_locked = False
 
-                    # 首次检测到站点时播放EEW警报音并启用追标波形显示
-                    if not self.eew_alert_played and self.sound_manager:
-                        self.sound_manager.play_eew()
-                        self.eew_alert_played = True
-                        self.tracking_wave_visible = True  # 启用追标波形显示
-                        self.first_detection_time = self.earthquake.time  # 记录首次检测时间
-                        print(f"[EEW] 站点检测到地震波 - 开始追标 (t={self.first_detection_time:.1f}s)")
+                # 播放EEW警报音并启用追标波形显示
+                if not self.eew_alert_played and self.sound_manager:
+                    self.sound_manager.play_eew()
+                    self.eew_alert_played = True
+                    self.tracking_wave_visible = True
+                    print(f"[EEW] 震度3+ - 开始追标 (t={current_time:.1f}s)")
 
-                    print(f"[自动追踪] 切换到站点追踪模式 - 震度{intensity_to_scale(target_intensity)}")
+                print(f"[自动追踪] 切换到站点追踪模式 - 震度{intensity_to_scale(target_intensity)}")
 
         elif self.auto_zoom_mode == "following_station":
             # 站点追踪模式：智能锁定异动站点区域

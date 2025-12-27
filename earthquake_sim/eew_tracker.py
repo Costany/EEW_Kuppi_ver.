@@ -5,6 +5,8 @@ EEW追标模式 - 模拟紧急地震速报的动态修正过程
 
 真实的EEW系统会在地震发生后不断更新震级、震源位置等信息
 本模块模拟这种"追标"（追踪修正）过程，让模拟器更真实
+
+简化版B-Δ法：站点数越多，收敛越快
 """
 import random
 
@@ -15,7 +17,7 @@ class EEWTracker:
 
     工作原理：
     1. 初始发布的信息可能不准确（故意加入误差）
-    2. 随着时间推移，逐步修正为真实值
+    2. 随着检测到的站点数增加，逐步修正为真实值
     3. 每次修正触发"訂正"（订正）通知
     """
 
@@ -87,7 +89,9 @@ class EEWTracker:
 
     def update(self, detected_station_count, elapsed_time):
         """
-        更新追标状态（站点驱动模式）
+        更新追标状态（站点驱动模式 - 简化版B-Δ法）
+
+        站点数越多，收敛越快（模拟多站点定位的精度提升）
 
         Args:
             detected_station_count: 当前检测到地震波的站点数（震度>=3）
@@ -141,7 +145,7 @@ class EEWTracker:
             print(f"  原因: 震级误差{mag_error_abs:.1f}或深度误差{depth_error_abs:.0f}km过大")
         else:
             # 正常修正：误差逐步收敛
-            # 站点越多，修正幅度越大（更有信心）
+            # 站点越多，修正幅度越大（更有信心）- 简化版B-Δ法
             if detected_station_count >= 20:
                 decay_rate = random.uniform(0.4, 0.6)  # 大量站点：快速收敛
             elif detected_station_count >= 10:
@@ -255,22 +259,25 @@ def test_eew_tracker():
         enabled=True
     )
 
-    # 模拟20秒的追标过程
+    # 模拟站点逐步检测到地震波
     print("\n模拟追标过程:")
     print("-" * 70)
 
-    for t in range(21):
-        updated = tracker.update(t)
+    station_counts = [0, 1, 2, 3, 5, 8, 13, 20, 30, 50]
+    for i, count in enumerate(station_counts):
+        t = i * 2  # 每2秒检测到更多站点
+        updated = tracker.update(count, t)
 
         if updated:
             lat, lon, depth, mag = tracker.get_current_values()
-            print(f"t={t:2d}s: 修正! 新值: ({lat:.2f}, {lon:.2f}), "
-                  f"{depth:.0f}km, M{mag:.1f}")
+            print(f"  -> 当前值: ({lat:.2f}, {lon:.2f}), {depth:.0f}km, M{mag:.1f}")
 
             if tracker.consume_correction_flag():
-                print("       >>> 播放'訂正'音频")
+                print("     >>> 播放'訂正'音频")
 
-        time.sleep(0.2)  # 模拟时间流逝
+        if tracker.is_converged():
+            print("\n  *** 已收敛 ***")
+            break
 
     # 最终结果
     print("\n" + "-" * 70)

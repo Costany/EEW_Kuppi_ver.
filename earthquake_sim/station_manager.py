@@ -32,15 +32,29 @@ class Station:
         self.s_wave_arrived = False
         self.time_since_peak = 0  # 达峰后经过时间（秒）
 
+        # P波到达记录（用于实时定位）
+        self.p_arrival_time = None  # P波到达时刻（模拟时间）
+        self.p_amplitude = 0  # P波振幅（用于震级估算）
+
     def update(self, earthquake, current_time: float, dt: float):
         """更新站点状态 - 渐进式增长逻辑（Scratch兼容）"""
         # 使用 earthquake 对象的方法计算正确的到达时间（基于震源距离）
         p_arrival_time = earthquake.get_p_arrival_time(self.lat, self.lon)
         s_arrival_time = earthquake.get_s_arrival_time(self.lat, self.lon)
 
-        # 检查波是否到达
+        # 检查波是否到达（记录首次P波到达时刻）
+        was_p_arrived = self.p_wave_arrived
         self.p_wave_arrived = current_time >= p_arrival_time
         self.s_wave_arrived = current_time >= s_arrival_time
+
+        # 首次检测到P波时，记录到达时刻（用于实时定位）
+        if self.p_wave_arrived and not was_p_arrived:
+            self.p_arrival_time = current_time
+            # 计算P波振幅（简化：基于震级和距离）
+            epicentral_dist = earthquake.get_epicentral_distance(self.lat, self.lon)
+            # 振幅公式（简化版）: A = 10^(M-1.5) / D
+            if epicentral_dist > 0:
+                self.p_amplitude = (10 ** (earthquake.magnitude - 1.5)) / max(1, epicentral_dist)
 
         # 计算震央距离（用于震度计算）
         epicentral_dist = earthquake.get_epicentral_distance(self.lat, self.lon)
@@ -144,32 +158,56 @@ class Station:
         return R * c
 
     def get_color(self) -> Tuple[int, int, int]:
-        """获取站点颜色"""
+        """获取站点底层圆点颜色（连续渐变色阶）
+
+        使用强震モニタ风格的渐变色阶：
+        - 默认（-3）: 深蓝色
+        - 随着震度增加，从深蓝→浅蓝→青→绿→黄→橙→红→紫 连续渐变
+        """
         intensity = self.intensity
 
-        # 使用与main.py相同的颜色映射
-        if intensity < 0:
-            return (100, 100, 100)  # 灰色
-        elif intensity < 1:
-            return (200, 200, 200)  # 震度0 浅灰
-        elif intensity < 2:
-            return (100, 150, 255)  # 震度1 浅蓝
-        elif intensity < 3:
-            return (50, 100, 200)   # 震度2 蓝
-        elif intensity < 4:
-            return (50, 255, 50)    # 震度3 绿
-        elif intensity < 5:
-            return (255, 255, 0)    # 震度4 黄
-        elif intensity < 5.5:
-            return (255, 200, 0)    # 震度5弱 橙黄
-        elif intensity < 6:
-            return (255, 100, 0)    # 震度5强 橙
-        elif intensity < 6.5:
-            return (255, 0, 0)      # 震度6弱 红
-        elif intensity < 7:
-            return (200, 0, 100)    # 震度6强 紫红
-        else:
-            return (150, 0, 150)    # 震度7 紫
+        # 将震度映射到0-1范围（-3到7映射为0到1）
+        # -3 -> 0.0, 7 -> 1.0
+        t = (intensity + 3) / 10.0
+        t = max(0.0, min(1.0, t))  # 钳制到0-1
+
+        # 强震モニタ风格渐变色阶（关键点）
+        # t=0.0 (-3): 深蓝 (0, 0, 80)
+        # t=0.3 (0):  蓝   (0, 63, 255)
+        # t=0.4 (1):  浅蓝 (0, 191, 255)
+        # t=0.5 (2):  青   (0, 255, 191)
+        # t=0.6 (3):  绿   (0, 255, 0)
+        # t=0.7 (4):  黄   (255, 255, 0)
+        # t=0.8 (5):  橙   (255, 127, 0)
+        # t=0.9 (6):  红   (255, 0, 0)
+        # t=1.0 (7):  紫   (200, 0, 200)
+
+        color_stops = [
+            (0.0,  (0, 0, 80)),       # 深蓝（默认底色）
+            (0.3,  (0, 63, 255)),     # 蓝（震度0）
+            (0.4,  (0, 191, 255)),    # 浅蓝（震度1）
+            (0.5,  (0, 255, 191)),    # 青（震度2）
+            (0.6,  (0, 255, 0)),      # 绿（震度3）
+            (0.7,  (255, 255, 0)),    # 黄（震度4）
+            (0.8,  (255, 127, 0)),    # 橙（震度5）
+            (0.9,  (255, 0, 0)),      # 红（震度6）
+            (1.0,  (200, 0, 200)),    # 紫（震度7）
+        ]
+
+        # 找到t所在的区间并线性插值
+        for i in range(len(color_stops) - 1):
+            t0, c0 = color_stops[i]
+            t1, c1 = color_stops[i + 1]
+            if t0 <= t <= t1:
+                # 计算区间内的插值比例
+                ratio = (t - t0) / (t1 - t0) if t1 > t0 else 0
+                r = int(c0[0] + (c1[0] - c0[0]) * ratio)
+                g = int(c0[1] + (c1[1] - c0[1]) * ratio)
+                b = int(c0[2] + (c1[2] - c0[2]) * ratio)
+                return (r, g, b)
+
+        # 超出范围返回最后一个颜色
+        return color_stops[-1][1]
 
     def get_intensity_text(self) -> str:
         """获取震度文本"""
@@ -232,6 +270,8 @@ class StationManager:
             station.p_wave_arrived = False
             station.s_wave_arrived = False
             station.time_since_peak = 0
+            station.p_arrival_time = None  # 重置P波到达记录
+            station.p_amplitude = 0
 
     def update(self, earthquake, current_time: float, dt: float):
         """更新所有站点"""
@@ -249,7 +289,12 @@ class StationManager:
         return detected_intensity_levels  # 返回检测到的所有震度等级
 
     def render(self, screen: pygame.Surface, simulator, station_icons: Dict[int, pygame.Surface] = None):
-        """渲染所有站点（使用SVG图标）"""
+        """渲染所有站点
+
+        两层渲染逻辑：
+        1. 底层：站点圆点，使用连续渐变色阶（深蓝→蓝→青→绿→黄→橙→红）
+        2. 上层：震度SVG图标（震度>=0时显示，包括震度0）
+        """
         # 图标缩放因子：限制在0.02-0.41之间
         icon_scale = min(0.41, max(0.02, 0.1 * simulator.zoom_level))
 
@@ -266,30 +311,24 @@ class StationManager:
                 continue
 
             rendered += 1
+            pos = (int(screen_x), int(screen_y))
 
-            # 根据震度选择图标或颜色
-            if station.intensity < 0:
-                # 未检测到震动：显示灰色小圆点
-                r = max(2, int(6 * icon_scale))
-                pygame.draw.circle(screen, (100, 100, 100), (int(screen_x), int(screen_y)), r)
-            else:
-                # 已检测到震动：使用震度图标
+            # 第一层：始终绘制圆点，颜色随震度连续渐变（稍微放大）
+            r = max(3, int(8 * icon_scale))
+            color = station.get_color()
+            pygame.draw.circle(screen, color, pos, r)
+            pygame.draw.circle(screen, (30, 30, 30), pos, r, 1)  # 深色边框
+
+            # 第二层：震度>=0时显示SVG图标（包括震度0）
+            if station.intensity >= 0 and station_icons:
                 icon_idx = intensity_to_scale(station.intensity)
-                # 包含震度0的映射
                 idx_map = {'0':0, '1':1, '2':2, '3':3, '4':4, '5-':5, '5+':6, '6-':7, '6+':8, '7':9}
-                idx = idx_map.get(icon_idx, 0)  # 默认使用0
+                idx = idx_map.get(icon_idx, 0)
 
-                # 使用SVG图标（如果有的话）
-                if station_icons and idx in station_icons:
+                if idx in station_icons:
                     icon = scale_icon(station_icons[idx], icon_scale)
-                    rect = icon.get_rect(center=(int(screen_x), int(screen_y)))
+                    rect = icon.get_rect(center=pos)
                     screen.blit(icon, rect)
-                else:
-                    # 回退方案：绘制简单圆圈
-                    r = max(3, int(10 * icon_scale))
-                    color = station.get_color()
-                    pygame.draw.circle(screen, color, (int(screen_x), int(screen_y)), r)
-                    pygame.draw.circle(screen, (0, 0, 0), (int(screen_x), int(screen_y)), r, 1)
 
     def get_max_intensity_in_region(self, region_bounds: Tuple[float, float, float, float]) -> float:
         """获取区域内的最大震度"""
@@ -314,3 +353,36 @@ class StationManager:
                 station.last_sound_intensity = int(station.intensity)
 
         return stations_to_sound
+
+    def get_p_wave_arrivals(self) -> List[Tuple[float, float, float]]:
+        """
+        获取所有已检测到P波的站点数据（用于实时定位）
+
+        Returns:
+            [(lat, lon, arrival_time), ...] P波到达数据列表
+        """
+        arrivals = []
+        for station in self.stations:
+            if station.p_arrival_time is not None:
+                arrivals.append((station.lat, station.lon, station.p_arrival_time))
+        return arrivals
+
+    def get_p_wave_arrivals_with_amplitude(self) -> List[Tuple[float, float, float, float]]:
+        """
+        获取所有已检测到P波的站点数据（含振幅，用于震级估算）
+
+        Returns:
+            [(lat, lon, arrival_time, amplitude), ...] P波到达数据列表
+        """
+        arrivals = []
+        for station in self.stations:
+            if station.p_arrival_time is not None and station.p_amplitude > 0:
+                arrivals.append((
+                    station.lat, station.lon,
+                    station.p_arrival_time, station.p_amplitude
+                ))
+        return arrivals
+
+    def get_detected_station_count(self) -> int:
+        """获取已检测到P波的站点数量"""
+        return sum(1 for s in self.stations if s.p_arrival_time is not None)
