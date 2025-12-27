@@ -6,3 +6,9 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# 提取脚本（开发用）
+extract_*.py
+
+# 临时数据文件
+*.tmp

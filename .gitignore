@@ -1,10 +1,10 @@
 # 隐藏文件夹
-.*/
 __pycache__/
+.snow/
 
-# 但允许 .claude/hooks 被追踪
-!.claude/
-!.claude/hooks/
+# Claude本地配置
+.claude/settings.local.json
+*/.claude/
 
 # 压缩文件
 *.zip
@@ -13,8 +13,25 @@ __pycache__/
 # 系统文件
 nul
 
-# 文档 (CLAUDE.md 应该被版本控制)
-AGENTS.md
+# Python
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Scratch项目文件夹（资源来源，不需要上传）
+リアルタイム地震ビューアー*/
+強震モニタ風地震シュミレーション*/
+*.html
+
+# 提取的资源（临时）
+extracted_assets/
+
+# 分析脚本（开发用）
+analyze_*.py
+check_*.py
+extract_*.py
+*_analysis.txt
 
 # 不需要的文件夹
 sb3_v2/
@@ -22,9 +39,3 @@ sb3_v3/
 svg/
 iku55/
 20240520_AreaForecastLocalE_GIS/
-
-# Python
-*.pyc
-*.pyo
-.venv/
-venv/

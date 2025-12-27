@@ -1,9 +1,11 @@
-# EEW_Kuppi_ver
+# EEW_Kuppi-anesewo_ver.
 
 **地震の到達時間シミュレーション** の Python/Pygame 復刻版
 
-原作 Scratch プロジェクト: https://scratch.mit.edu/projects/525151751/
-Geojson： https://github.com/0Quake/JMA_Region/tree/main
+原作 1 Scratch プロジェクト: https://scratch.mit.edu/projects/525151751/
+原作 2 Turbowarp 強震モニタ風地震シュミレーション v1.10.1 : https://turbowarp.org/1220818872?fps=250&clones=Infinity&offscreen&hqpen
+
+使用 Geojson： https://github.com/0Quake/JMA_Region/tree/main
 
 ## 概要
 
