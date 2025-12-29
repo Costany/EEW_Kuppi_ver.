@@ -42,18 +42,18 @@ class EEWTracker:
 
         # 当前报告值（初始值有较大误差）
         if enabled:
-            # 初始位置误差：±0.3-0.8度（较大偏差）
-            lat_error = random.uniform(-0.8, 0.8)
-            lon_error = random.uniform(-0.8, 0.8)
+            # 初始位置误差：±0.4-0.7度（约45-80km，真实EEW初期误差较大）
+            lat_error = random.uniform(-0.7, 0.7)
+            lon_error = random.uniform(-0.7, 0.7)
             self.current_lat = true_lat + lat_error
             self.current_lon = true_lon + lon_error
 
-            # 初始深度误差：±10-30km（较大偏差）
-            depth_error = random.uniform(-30, 30)
+            # 初始深度误差：±20-40km（深度估计较难）
+            depth_error = random.uniform(-40, 40)
             self.current_depth = max(0, true_depth + depth_error)
 
-            # 初始震级误差：±0.3-0.8
-            mag_error = random.uniform(-0.8, 0.8)
+            # 初始震级误差：±0.4-0.7（P波M估计不稳定）
+            mag_error = random.uniform(-0.7, 0.7)
             self.current_mag = max(1.0, min(9.5, true_mag + mag_error))
         else:
             # 禁用时直接使用真实值
@@ -65,7 +65,7 @@ class EEWTracker:
         # 追标状态（站点驱动模式）
         self.revision_count = 0  # 修正次数
         self.last_detected_station_count = 0  # 上次检测到的站点数
-        self.convergence_threshold = 0.05  # 收敛阈值（位置0.05度，震级0.1，深度5km）
+        self.convergence_threshold = 0.03  # 收敛阈值（位置0.03度≈3km）
 
         # 当前误差（用于逐步收敛）
         self.current_lat_error = lat_error if enabled else 0
@@ -76,9 +76,9 @@ class EEWTracker:
         # 是否需要播放"訂正"音频
         self.needs_correction_announcement = False
 
-        # 推翻重来阈值（当误差过大时才推翻）
-        self.overthrow_mag_threshold = 1.0  # 震级误差>1.0时推翻
-        self.overthrow_depth_threshold = 30  # 深度误差>30km时推翻
+        # 推翻重来阈值（当误差过大时才大幅修正）
+        self.overthrow_mag_threshold = 1.2  # 震级误差>1.2时大幅修正
+        self.overthrow_depth_threshold = 50  # 深度误差>50km时大幅修正
 
         print(f"[EEW追标] {'启用' if enabled else '禁用'}")
         if enabled:
@@ -94,7 +94,7 @@ class EEWTracker:
         站点数越多，收敛越快（模拟多站点定位的精度提升）
 
         Args:
-            detected_station_count: 当前检测到地震波的站点数（震度>=3）
+            detected_station_count: 当前检测到P波的站点数
             elapsed_time: 地震发生后经过的时间（秒）
 
         Returns:
@@ -108,20 +108,19 @@ class EEWTracker:
             return False
 
         # 只在检测到新站点时才修正（站点数增加）
-        # 或者每检测到5个新站点修正一次
         station_increase = detected_station_count - self.last_detected_station_count
 
-        # 至少需要3个站点才开始修正
-        if detected_station_count < 3:
+        # 至少需要5个站点才开始修正（真实EEW需要多点定位）
+        if detected_station_count < 5:
             return False
 
-        # 站点数增加至少5个或首次达到3个站点时才修正
+        # 修正触发条件
         should_correct = False
-        if detected_station_count >= 3 and self.revision_count == 0:
-            # 首次修正：检测到至少3个站点
+        if detected_station_count >= 5 and self.revision_count == 0:
+            # 首次修正：检测到至少5个站点
             should_correct = True
-        elif station_increase >= 5:
-            # 后续修正：每增加5个站点修正一次
+        elif station_increase >= 10:
+            # 后续修正：每增加10个站点修正一次（更慢的修正频率）
             should_correct = True
 
         if not should_correct:
@@ -131,28 +130,29 @@ class EEWTracker:
         self.last_detected_station_count = detected_station_count
         self.revision_count += 1
 
-        # 检查是否需要推翻重来（误差过大）
+        # 检查是否需要大幅修正（误差过大）
         mag_error_abs = abs(self.current_mag_error)
         depth_error_abs = abs(self.current_depth_error)
 
         if mag_error_abs > self.overthrow_mag_threshold or depth_error_abs > self.overthrow_depth_threshold:
-            # 推翻重来：意识到震级或深度完全错误
-            # 但不要完全重置，而是减半误差（避免追标波突然跳跃）
-            self.current_lat_error *= 0.5
-            self.current_lon_error *= 0.5
-            self.current_depth_error *= 0.5  # 保持深度方向，只减半
-            self.current_mag_error *= 0.5
+            # 大幅修正：意识到震级或深度完全错误
+            # 减半误差（避免追标波突然跳跃）
+            self.current_lat_error *= 0.4
+            self.current_lon_error *= 0.4
+            self.current_depth_error *= 0.4
+            self.current_mag_error *= 0.4
             print(f"[EEW追标] 第{self.revision_count}次修正 - **大幅修正** (站点:{detected_station_count}, t={elapsed_time:.1f}s)")
             print(f"  原因: 震级误差{mag_error_abs:.1f}或深度误差{depth_error_abs:.0f}km过大")
         else:
             # 正常修正：误差逐步收敛
             # 站点越多，修正幅度越大（更有信心）- 简化版B-Δ法
-            if detected_station_count >= 20:
-                decay_rate = random.uniform(0.4, 0.6)  # 大量站点：快速收敛
-            elif detected_station_count >= 10:
-                decay_rate = random.uniform(0.3, 0.5)  # 较多站点：适度收敛
+            # 但整体收敛速度要慢，让追标过程更明显
+            if detected_station_count >= 50:
+                decay_rate = random.uniform(0.2, 0.35)  # 大量站点：较快收敛
+            elif detected_station_count >= 20:
+                decay_rate = random.uniform(0.15, 0.25)  # 较多站点：适度收敛
             else:
-                decay_rate = random.uniform(0.2, 0.4)  # 少量站点：缓慢收敛
+                decay_rate = random.uniform(0.1, 0.2)  # 少量站点：缓慢收敛
 
             self.current_lat_error *= (1 - decay_rate)
             self.current_lon_error *= (1 - decay_rate)

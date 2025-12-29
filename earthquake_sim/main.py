@@ -656,34 +656,24 @@ class EarthquakeSimulator:
 
     def update_region_intensities_from_new_stations(self):
         """从站点系统更新区域震度（用于区域填色）"""
-        # 首次调用时预计算新站点->旧站点的映射（只计算一次）
-        if not hasattr(self, '_new_to_old_station_map'):
-            print("[性能优化] 预计算站点映射...")
-            self._new_to_old_station_map = {}  # station.id -> old_station
-
-            # 构建旧站点的坐标索引（加速查找）
-            old_stations_index = []
-            for old_station in self.stations:
-                old_lat = float(old_station['lat'])
-                old_lon = float(old_station['lon'])
-                old_stations_index.append((old_lat, old_lon, old_station))
+        # 首次调用时预计算新站点->区域的映射（只计算一次）
+        if not hasattr(self, '_station_to_region_map'):
+            print("[性能优化] 预计算站点->区域映射（point-in-polygon）...")
+            self._station_to_region_map = {}  # station.id -> (region_code, region_name)
 
             for station in self.station_manager.stations:
-                best_match = None
-                best_dist = float('inf')
+                # 使用point-in-polygon判断站点在哪个区域
+                region_code = self._find_region_for_point(station.lat, station.lon)
+                if region_code:
+                    # 找到区域名称
+                    region_name = ""
+                    for region in self.regions_data:
+                        if region.get('properties', {}).get('code', '') == region_code:
+                            region_name = region.get('properties', {}).get('name', '')
+                            break
+                    self._station_to_region_map[station.id] = (region_code, region_name)
 
-                for old_lat, old_lon, old_station in old_stations_index:
-                    # 计算距离（简化版，不需要精确）
-                    dist = abs(old_lat - station.lat) + abs(old_lon - station.lon)
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_match = old_station
-
-                # 不设阈值，每个新站点都匹配最近的旧站点
-                if best_match:
-                    self._new_to_old_station_map[station.id] = best_match
-
-            print(f"[性能优化] 完成: {len(self._new_to_old_station_map)}/{len(self.station_manager.stations)} 个站点匹配成功")
+            print(f"[性能优化] 完成: {len(self._station_to_region_map)}/{len(self.station_manager.stations)} 个站点在陆地区域内")
 
         # 清空并重建区域震度
         self.region_max_intensities = {}
@@ -695,13 +685,12 @@ class EarthquakeSimulator:
             if station.intensity < 0.5:
                 continue
 
-            old_station = self._new_to_old_station_map.get(station.id)
-            if not old_station:
+            region_info = self._station_to_region_map.get(station.id)
+            if not region_info:
+                # 站点不在任何陆地区域内（海上站点），跳过
                 continue
 
-            region_code = old_station.get('area', {}).get('code', '')
-            if not region_code:
-                continue
+            region_code, region_name = region_info
 
             # 更新区域最大震度
             if region_code not in self.region_max_intensities or station.intensity > self.region_max_intensities[region_code]:
@@ -710,7 +699,7 @@ class EarthquakeSimulator:
             # 更新全局最大震度
             if station.intensity > self.max_intensity:
                 self.max_intensity = station.intensity
-                self.max_intensity_location = old_station.get('area', {}).get('name', '')
+                self.max_intensity_location = region_name
 
     def _find_region_for_point(self, lat: float, lon: float) -> str:
         """查找点所在的区域代码（使用point-in-polygon算法）"""
@@ -1420,6 +1409,10 @@ class EarthquakeSimulator:
                 # 检测到异动时就显示追标波形（Scratch兼容）
                 self.tracking_wave_visible = True
 
+                # 立即缩放到检测站点（不要smooth，立即响应）
+                self._zoom_to_circle(target_lat, target_lon, radius_km=290, smooth=False)
+                print(f"[检测] 立即缩放到站点 ({target_lat:.2f}, {target_lon:.2f}), 290km视野")
+
                 # 播放检测音效（chime）
                 if self.sound_manager:
                     self.sound_manager.play_chime()
@@ -1437,9 +1430,9 @@ class EarthquakeSimulator:
                     self.tracked_station = (target_lat, target_lon)
                     self.max_detected_intensity = target_intensity
 
-                # 镜头移动到站点，400km视野（平滑过渡）
+                # 镜头移动到站点，290km视野（平滑过渡）
                 self._zoom_to_circle(self.tracked_station[0], self.tracked_station[1],
-                                    radius_km=400, smooth=True)
+                                    radius_km=290, smooth=True)
 
             # 震度3+时 -> 切换到正式追标模式
             if high_intensity_stations:
@@ -1473,7 +1466,7 @@ class EarthquakeSimulator:
                     self.max_detected_intensity = target_intensity
                     self.zoom_locked = False  # 解锁缩放
                     self.last_intensity_update_time = current_time  # 更新时间戳
-                    print(f"[自动追踪] 更新追踪站点 - 震度{intensity_to_scale(target_intensity)}")
+                    print(f"[站点追踪] 更新目标 - 震度{intensity_to_scale(target_intensity)}")
 
                 # 智能缩放：根据站点分布范围动态调整
                 if not self.zoom_locked:
@@ -1498,6 +1491,11 @@ class EarthquakeSimulator:
                             'min_lon': min_lon - lon_margin,
                             'max_lon': max_lon + lon_margin
                         }
+
+                        # 计算边界框范围（km）
+                        bbox_lat_range = target_bounds['max_lat'] - target_bounds['min_lat']
+                        bbox_km = bbox_lat_range * 111
+                        print(f"[站点追踪] 边界框: {len(all_lats)}站点, {bbox_km:.0f}km")
 
                         # 确保视野不小于最小视野半径
                         min_lat_range = self.min_view_radius_km * 2 / 111  # km转换为度
@@ -1554,7 +1552,7 @@ class EarthquakeSimulator:
                     self.auto_zoom_mode = "following_p"
                     self.zoom_locked = False
                     self.last_zoom_time = 0  # 重置缩放时间，让第一次缩放立即执行
-                    print(f"[自动追踪] 切换到P波追踪模式 - 站点区域已锁定，开始追P波扩散")
+                    print(f"[站点追踪] -> P波追踪模式")
 
                 # 如果大范围出现高震度（5个以上震度5+站点）-> 切换到S波追踪
                 high_intensity_count = sum(1 for _, _, i in high_intensity_stations if i >= 5.0)
@@ -1562,7 +1560,7 @@ class EarthquakeSimulator:
                     self.auto_zoom_mode = "following_s"
                     self.zoom_locked = False
                     self.last_zoom_time = 0  # 重置缩放时间，让第一次缩放立即执行
-                    print(f"[自动追踪] 切换到S波追踪模式 - 大范围高震度")
+                    print(f"[站点追踪] -> S波追踪模式 (大范围高震度)")
 
         elif self.auto_zoom_mode == "following_p":
             # P波追踪模式：间隔式平滑缩放（停一下 → 缓慢缩 → 停住）
@@ -2232,17 +2230,15 @@ class EarthquakeSimulator:
                         )
 
                     # 更新EEW追标器（站点驱动）
-                    if self.eew_tracker:
-                        # 统计检测到地震波的站点数（震度>=3）- 使用新站点系统
+                    # 重要：只有追标波形可见后才开始订正，避免"凭空订正"
+                    if self.eew_tracker and self.tracking_wave_visible:
+                        # 统计检测到P波的站点数（用于追标）- 比震度>=3更可靠
                         if self.station_manager:
-                            detected_station_count = sum(
-                                1 for s in self.station_manager.stations
-                                if s.intensity >= 3.0
-                            )
+                            detected_station_count = self.station_manager.get_detected_station_count()
                         else:
                             detected_station_count = sum(
                                 1 for (_, _), (intensity, _) in self.station_intensities.items()
-                                if intensity >= 3.0
+                                if intensity >= 0  # P波到达即可
                             )
 
                         # 站点驱动修正
